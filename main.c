@@ -26,6 +26,68 @@
 
 #include <util/delay.h>
 
+static uint32_t timer_1k;
+static uint16_t timer_1k_oneshot;
+static bool timer_1k_done;
+
+ISR(TIM0_COMPA_vect)
+{
+	timer_1k++;
+	if (timer_1k_oneshot != 0) {
+		if (--timer_1k_oneshot == 0)
+			timer_1k_done = true;
+	}
+}
+
+static void
+timer_1k_init(void)
+{
+	TCCR0B |= (1 << WGM02); /* timer1 CTC mode */
+	TIMSK0 |= (1 << OCIE0A); /* enable CTC interrupt */
+
+	cli();
+	OCR0A = 125; /* 1ms for 1MHz CPU and /8 prescale */
+	TCCR0B |= (1 << CS01); /* /8 prescale */
+	sei();
+}
+
+static uint32_t
+timer_1k_val(void)
+{
+	uint32_t ret;
+
+	cli();
+	ret = timer_1k;
+	sei();
+	return ret;
+}
+
+static void
+timer_oneshot(uint16_t ms)
+{
+	cli();
+	timer_1k_done = false;
+	timer_1k_oneshot = ms;
+	sei();
+}
+
+static bool
+timer_oneshot_done(void)
+{
+	bool ret;
+
+	cli();
+	ret = timer_1k_done;
+	sei();
+	return ret;
+}
+
+static void
+timer_oneshot_cancel(void)
+{
+	timer_oneshot(0);
+}
+
 static void
 out_light(bool on)
 {
@@ -82,94 +144,96 @@ uint8_t stateblink[] = {
 	(3 << 4) | 0x4, /* unknown		morse: ..-	'U' */
 };
 
-#define APPROX_TIMEOUT_TICKS(ms) ((uint32_t)((ms) * ((uint32_t)F_CPU / 1000UL)))
-#define APPROX_TIMEOUT(now, ms) ((uint32_t)(now) + APPROX_TIMEOUT_TICKS(ms))
-
 #define SPINDLE_START_TIME_MS	200
 #define SPINDLE_COAST_TIME_MS	1000
+#define ERROR_RECOVER_TIME_MS	2000
 #define STATUS_TIME_UNIT	100	/* ms */
-#define STATUS_TIME_DOT		APPROX_TIMEOUT_TICKS(1 * STATUS_TIME_UNIT)
-#define STATUS_TIME_DASH	APPROX_TIMEOUT_TICKS(3 * STATUS_TIME_UNIT)
-#define STATUS_TIME_INTERVAL	APPROX_TIMEOUT_TICKS(1 * STATUS_TIME_UNIT)
-#define STATUS_TIME_GAP		APPROX_TIMEOUT_TICKS(3 * STATUS_TIME_UNIT)
+#define STATUS_TIME_DOT		(1 * STATUS_TIME_UNIT)
+#define STATUS_TIME_DASH	(3 * STATUS_TIME_UNIT)
+#define STATUS_TIME_INTERVAL	(1 * STATUS_TIME_UNIT)
+#define STATUS_TIME_GAP		(3 * STATUS_TIME_UNIT)
 
 int
 main(void)
 {
 	enum state ostate, state;
-	uint32_t timeout = 0, status_timeout = 0, ctr = 0;
+	uint32_t status_timeout = 0;
 	uint32_t status_times[32];
 	uint8_t i, j, x, status_len = 0, status_phase = 0;
 
+	/* Leave clock at 1MHz; plenty fast for this */
+#if 0
 	CLKPR = 0x80;
 	CLKPR = 0x00; /* 8 MHz */
+#endif
 
 	DDRA = (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4);
+	DDRB = 0;
 	PORTA = (1 << 7); /* pullup: estopok */
-	DDRB = (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3);
-	PORTB = 0;
+	PORTB = (1 << 0) | (1 << 1) | (1 << 2); /* pullup: light, fwd, rev */
 
-	/* XXX replace crappy ctr with a monotonic timer driven by interrupt */
+	timer_1k_init();
 
 	state = ostate = S_ESTOPPED;
-	for (;; ctr++) {
-		bool in_light = !!(PORTB & (1<<2));
-		bool in_fwd = !!(PORTB & (1<<1));
-		bool in_rev = !!(PORTB & (1<<0));
-		bool in_estopok = !!(PORTA & (1<<7));
-
-		/* Light relay just follows input; XXX disable on error? */
-		out_light(in_light);
+	for (;;) {
+		bool in_light = !!(PINB & (1<<2));
+		bool in_fwd = !!(PINB & (1<<1));
+		bool in_rev = !!(PINB & (1<<0));
+		bool in_estopok = !!(PINA & (1<<7));
 
 		/* Update state based on inputs */
 		ostate = state;
 		switch (state) {
 		case S_ERROR:
-			/* XXX sticks here, maybe try timeout+recover? */
+			/* recover from errors after long timeout */
+			if (timer_oneshot_done())
+				state = S_ESTOPPED;
 			break;
 		case S_ESTOPPED:
 			if (in_estopok)
 				state = S_READY;
 			break;
 		case S_READY:
-			if (in_fwd && in_rev)
+			if (in_fwd && in_rev) {
 				state = S_ERROR;
-			else if (!in_estopok)
+				timer_oneshot(ERROR_RECOVER_TIME_MS);
+			} else if (!in_estopok)
 				state = S_ESTOPPED;
 			else if (in_fwd) {
-				timeout = APPROX_TIMEOUT(ctr,
-				    SPINDLE_START_TIME_MS);
+				timer_oneshot(SPINDLE_START_TIME_MS);
 				state = S_FWD_START;
 			} else if (in_rev) {
-				timeout = APPROX_TIMEOUT(ctr,
-				    SPINDLE_START_TIME_MS);
+				timer_oneshot(SPINDLE_START_TIME_MS);
 				state = S_REV_START;
 			}
 			break;
 		case S_FWD_START:
-			if (in_rev)
+			if (in_rev) {
 				state = S_ERROR;
-			else if (!in_estopok || !in_fwd)
+				timer_oneshot(ERROR_RECOVER_TIME_MS);
+			} else if (!in_estopok || !in_fwd) {
+				timer_oneshot(SPINDLE_COAST_TIME_MS);
 				state = S_FWD_SPINDOWN;
-			else if (timeout == ctr)
+			} else if (timer_oneshot_done())
 				state = S_FWD;
 			break;
 		case S_FWD:
-			if (in_rev)
+			if (in_rev) {
 				state = S_ERROR;
-			else if (!in_estopok || !in_fwd) {
-				timeout = APPROX_TIMEOUT(ctr,
-				    SPINDLE_COAST_TIME_MS);
+				timer_oneshot(ERROR_RECOVER_TIME_MS);
+			} else if (!in_estopok || !in_fwd) {
+				timer_oneshot(SPINDLE_COAST_TIME_MS);
 				state = S_FWD_SPINDOWN;
 			}
 			break;
 		case S_FWD_SPINDOWN:
-			if (in_rev)
+			if (in_rev) {
 				state = S_ERROR;
-			else if (in_estopok && in_fwd) {
-				/* allow restart if coasting */
-				state = S_FWD;
-			} else if (timeout == ctr) {
+				timer_oneshot(ERROR_RECOVER_TIME_MS);
+			} else if (in_estopok && in_fwd) {
+				timer_oneshot_cancel();
+				state = S_FWD_START;
+			} else if (timer_oneshot_done()) {
 				if (!in_estopok)
 					state = S_ESTOPPED;
 				else
@@ -177,31 +241,32 @@ main(void)
 			}
 			break;
 		case S_REV_START:
-			if (in_fwd)
+			if (in_fwd) {
 				state = S_ERROR;
-			else if (!in_estopok || !in_rev)
+				timer_oneshot(ERROR_RECOVER_TIME_MS);
+			} else if (!in_estopok || !in_rev) {
+				timer_oneshot(SPINDLE_COAST_TIME_MS);
 				state = S_REV_SPINDOWN;
-			else if (timeout == ctr) {
+			} else if (timer_oneshot_done())
 				state = S_REV;
-			}
 			break;
 		case S_REV:
-			if (in_fwd)
+			if (in_fwd) {
 				state = S_ERROR;
-			else if (!in_estopok || !in_rev) {
-				timeout = APPROX_TIMEOUT(ctr,
-				    SPINDLE_COAST_TIME_MS);
+				timer_oneshot(ERROR_RECOVER_TIME_MS);
+			} else if (!in_estopok || !in_rev) {
+				timer_oneshot(SPINDLE_COAST_TIME_MS);
 				state = S_REV_SPINDOWN;
 			}
 			break;
 		case S_REV_SPINDOWN:
-			if (in_fwd)
+			if (in_fwd) {
 				state = S_ERROR;
-			else if (in_estopok && in_rev) {
-				/* allow restart if coasting */
-				state = S_REV;
-			} else if (timeout == ctr) {
-				/* XXX cancel timer */
+				timer_oneshot(ERROR_RECOVER_TIME_MS);
+			} else if (in_estopok && in_rev) {
+				timer_oneshot_cancel();
+				state = S_REV_START;
+			} else if (timer_oneshot_done()) {
 				if (!in_estopok)
 					state = S_ESTOPPED;
 				else
@@ -211,6 +276,7 @@ main(void)
 		default:
 			/* shouldn't happen */
 			state = S_ERROR;
+			timer_oneshot(ERROR_RECOVER_TIME_MS);
 			break;
 		}
 
@@ -232,50 +298,59 @@ main(void)
 			}
 			status_len = j;
 			status_phase = 0; /* start new sequence with gap */
-			status_timeout = ctr + status_times[0];
-		} else if (ctr == status_timeout) {
+			status_timeout = timer_1k_val() + status_times[0];
+		} else if (timer_1k_val() == status_timeout) {
 			/* advance phase */
 			status_phase = (status_phase + 1) % status_len;
-			status_timeout = ctr + status_times[status_phase];
+			status_timeout = timer_1k_val() +
+			    status_times[status_phase];
 		}
 
 		/* act on state */
 		switch (state) {
 		case S_ESTOPPED:
 		case S_READY:
+			out_light(in_light);
 			out_inhibit(0);
 			out_start(0);
 			out_direction(0);
 			break;
 		case S_FWD_START:
+			out_light(in_light);
 			out_inhibit(1);
 			out_start(1);
 			out_direction(0);
 		case S_FWD:
+			out_light(in_light);
 			out_inhibit(1);
 			out_start(0);
 			out_direction(0);
 			break;
 		case S_FWD_SPINDOWN:
+			out_light(in_light);
 			out_inhibit(0);
 			out_start(0);
 			out_direction(0);
 			break;
 		case S_REV_START:
+			out_light(in_light);
 			out_inhibit(1);
 			out_start(1);
 			out_direction(1);
 		case S_REV:
+			out_light(in_light);
 			out_inhibit(1);
 			out_start(0);
 			out_direction(1);
 			break;
 		case S_REV_SPINDOWN:
+			out_light(in_light);
 			out_inhibit(0);
 			out_start(0);
 			out_direction(1);
 			break;
 		default:
+			out_light(0);
 			out_inhibit(0);
 			out_start(0);
 			/* don't touch direction */
