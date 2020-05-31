@@ -82,17 +82,24 @@ uint8_t stateblink[] = {
 	(3 << 4) | 0x4, /* unknown		morse: ..-	'U' */
 };
 
+#define APPROX_TIMEOUT_TICKS(ms) ((uint32_t)((ms) * ((uint32_t)F_CPU / 1000UL)))
+#define APPROX_TIMEOUT(now, ms) ((uint32_t)(now) + APPROX_TIMEOUT_TICKS(ms))
+
 #define SPINDLE_START_TIME_MS	200
 #define SPINDLE_COAST_TIME_MS	1000
-#define STATUS_BLINK_MS		150
-
-#define APPROX_TIMEOUT(now, ms) ((now) + ((uint32_t)(ms) * (F_CPU / 1000UL)))
+#define STATUS_TIME_UNIT	100	/* ms */
+#define STATUS_TIME_DOT		APPROX_TIMEOUT_TICKS(1 * STATUS_TIME_UNIT)
+#define STATUS_TIME_DASH	APPROX_TIMEOUT_TICKS(3 * STATUS_TIME_UNIT)
+#define STATUS_TIME_INTERVAL	APPROX_TIMEOUT_TICKS(1 * STATUS_TIME_UNIT)
+#define STATUS_TIME_GAP		APPROX_TIMEOUT_TICKS(3 * STATUS_TIME_UNIT)
 
 int
 main(void)
 {
-	enum state state = S_ESTOPPED;
-	uint32_t timeout = 0, ctr = 0;
+	enum state ostate, state;
+	uint32_t timeout = 0, status_timeout = 0, ctr = 0;
+	uint32_t status_times[32];
+	uint8_t i, j, x, status_len = 0, status_phase = 0;
 
 	CLKPR = 0x80;
 	CLKPR = 0x00; /* 8 MHz */
@@ -102,18 +109,23 @@ main(void)
 	DDRB = (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3);
 	PORTB = 0;
 
+	/* XXX replace crappy ctr with a monotonic timer driven by interrupt */
+
+	state = ostate = S_ESTOPPED;
 	for (;; ctr++) {
 		bool in_light = !!(PORTB & (1<<2));
 		bool in_fwd = !!(PORTB & (1<<1));
 		bool in_rev = !!(PORTB & (1<<0));
 		bool in_estopok = !!(PORTA & (1<<7));
 
+		/* Light relay just follows input; XXX disable on error? */
 		out_light(in_light);
 
 		/* Update state based on inputs */
+		ostate = state;
 		switch (state) {
 		case S_ERROR:
-			/* XXX sticks here, maybe not? */
+			/* XXX sticks here, maybe try timeout+recover? */
 			break;
 		case S_ESTOPPED:
 			if (in_estopok)
@@ -202,6 +214,31 @@ main(void)
 			break;
 		}
 
+		/* prepare/update Morse code status pattern */
+		if (status_len == 0 || ostate != state) {
+			j = 0;
+			status_times[j++] = STATUS_TIME_GAP;
+			/*
+			 * prepare tick intervals in status_times[]
+			 * odd-numbered entries correspond to lit phases
+			 * (i.e. dots or dashes), even numbered entries
+			 * are inter-symbol intervals or inter-letter gaps.
+			 */
+			for (i = 0; i < stateblink[state] >> 4; i++) {
+				x = ((stateblink[state] & (1 << i)) != 0);
+				status_times[j++] = x ? STATUS_TIME_DASH :
+				    STATUS_TIME_DOT;
+				status_times[j++] = STATUS_TIME_INTERVAL;
+			}
+			status_len = j;
+			status_phase = 0; /* start new sequence with gap */
+			status_timeout = ctr + status_times[0];
+		} else if (ctr == status_timeout) {
+			/* advance phase */
+			status_phase = (status_phase + 1) % status_len;
+			status_timeout = ctr + status_times[status_phase];
+		}
+
 		/* act on state */
 		switch (state) {
 		case S_ESTOPPED:
@@ -239,11 +276,13 @@ main(void)
 			out_direction(1);
 			break;
 		default:
+			out_inhibit(0);
+			out_start(0);
+			/* don't touch direction */
 			break;
 		}
 
 		/* display status */
-		/* XXX */
-		out_status(1);
+		out_status(status_phase & 1);
 	}
 }
