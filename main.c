@@ -280,7 +280,7 @@ main(void)
 			break;
 		}
 
-		/* prepare/update Morse code status pattern */
+		/* prepare/update Morse code status pattern on state change */
 		if (status_len == 0 || ostate != state) {
 			j = 0;
 			status_times[j++] = STATUS_TIME_GAP;
@@ -300,13 +300,16 @@ main(void)
 			status_phase = 0; /* start new sequence with gap */
 			status_timeout = timer_1k_val() + status_times[0];
 		} else if (timer_1k_val() == status_timeout) {
-			/* advance phase */
+			/* advance phase at expiry of current interval */
 			status_phase = (status_phase + 1) % status_len;
 			status_timeout = timer_1k_val() +
 			    status_times[status_phase];
 		}
 
-		/* act on state */
+		/* display status */
+		out_status(status_phase & 1);
+
+		/* act on current state */
 		switch (state) {
 		case S_ESTOPPED:
 		case S_READY:
@@ -356,8 +359,5 @@ main(void)
 			/* don't touch direction */
 			break;
 		}
-
-		/* display status */
-		out_status(status_phase & 1);
 	}
 }
