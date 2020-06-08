@@ -111,13 +111,13 @@ timer_oneshot_done(void)
 	return ret;
 }
 
-#if 0
 static void
 timer_oneshot_cancel(void)
 {
 	timer_oneshot(0);
 }
-#endif
+
+/* Outputs */
 
 static void
 out_light(bool on)
@@ -164,6 +164,135 @@ uint8_t stateblink[] = {
 	(3 << 4) | 0x4, /* unknown		morse: ..-	'U' */
 };
 
+/* state advance functions; these enforce preconditions and start/stop timer */
+
+static void
+advance_error(void)
+{
+	timer_oneshot(ERROR_RECOVER_TIME_MS);
+	state = S_ERROR;
+}
+
+static void
+advance_estopped(void)
+{
+	switch (state) {
+	case S_ERROR:
+	case S_COLD_START:
+	case S_READY:
+	case S_FWD_SPINDOWN:
+	case S_REV_SPINDOWN:
+		break;
+	default:
+		advance_error();
+		return;
+	}
+	timer_oneshot_cancel();
+	state = S_ESTOPPED;
+}
+
+static void
+advance_ready(void)
+{
+	switch (state) {
+	case S_ESTOPPED:
+	case S_FWD_SPINDOWN:
+	case S_REV_SPINDOWN:
+		break;
+	default:
+		advance_error();
+		return;
+	}
+	timer_oneshot_cancel();
+	state = S_READY;
+}
+
+static void
+advance_fwd_start(void)
+{
+	switch (state) {
+	case S_READY:
+	case S_FWD_SPINDOWN:
+		break;
+	default:
+		advance_error();
+		return;
+	}
+	timer_oneshot(SPINDLE_START_TIME_MS);
+	state = S_FWD_START;
+}
+
+static void
+advance_fwd(void)
+{
+	switch (state) {
+	case S_FWD_START:
+		break;
+	default:
+		advance_error();
+		return;
+	}
+	timer_oneshot_cancel();
+	state = S_FWD;
+}
+
+static void
+advance_fwd_spindown(void)
+{
+	switch (state) {
+	case S_FWD:
+		break;
+	default:
+		advance_error();
+		return;
+	}
+	timer_oneshot(SPINDLE_COAST_TIME_MS);
+	state = S_FWD_SPINDOWN;
+}
+
+static void
+advance_rev_start(void)
+{
+	switch (state) {
+	case S_READY:
+	case S_REV_SPINDOWN:
+		break;
+	default:
+		advance_error();
+		return;
+	}
+	timer_oneshot(SPINDLE_START_TIME_MS);
+	state = S_REV_START;
+}
+
+static void
+advance_rev(void)
+{
+	switch (state) {
+	case S_REV_START:
+		break;
+	default:
+		advance_error();
+		return;
+	}
+	timer_oneshot_cancel();
+	state = S_REV;
+}
+
+static void
+advance_rev_spindown(void)
+{
+	switch (state) {
+	case S_REV:
+		break;
+	default:
+		advance_error();
+		return;
+	}
+	timer_oneshot(SPINDLE_COAST_TIME_MS);
+	state = S_REV_SPINDOWN;
+}
+
 int
 main(void)
 {
@@ -185,7 +314,6 @@ main(void)
 
 	timer_1k_init();
 
-	ostate = state;
 	timer_oneshot(COLD_START_TIME_MS);
 	for (;;) {
 		/* pins are active low */
@@ -200,105 +328,85 @@ main(void)
 		case S_ERROR:
 			/* stay in error state if inputs still bad */
 			if (in_fwd && in_rev)
-				timer_oneshot(ERROR_RECOVER_TIME_MS);
+				advance_error();
 			else if (timer_oneshot_done())
-				state = S_ESTOPPED; /* recover after timeout */
+				advance_estopped(); /* recover after timeout */
 			break;
 		case S_COLD_START:
 			if (timer_oneshot_done())
-				state = S_ESTOPPED;
+				advance_estopped();
 			break;
 		case S_ESTOPPED:
-			if (in_fwd && in_rev) {
-				state = S_ERROR;
-				timer_oneshot(ERROR_RECOVER_TIME_MS);
-			} else if (in_estopok)
-				state = S_READY;
+			if (in_fwd && in_rev)
+				advance_error();
+			else if (in_estopok)
+				advance_ready();
 			break;
 		case S_READY:
-			if (in_fwd && in_rev) {
-				state = S_ERROR;
-				timer_oneshot(ERROR_RECOVER_TIME_MS);
-			} else if (!in_estopok)
-				state = S_ESTOPPED;
-			else if (in_fwd) {
-				timer_oneshot(SPINDLE_START_TIME_MS);
-				state = S_FWD_START;
-			} else if (in_rev) {
-				timer_oneshot(SPINDLE_START_TIME_MS);
-				state = S_REV_START;
-			}
+			if (in_fwd && in_rev)
+				advance_error();
+			else if (!in_estopok)
+				advance_estopped();
+			else if (in_fwd)
+				advance_fwd_start();
+			else if (in_rev)
+				advance_rev_start();
 			break;
 		case S_FWD_START:
-			if (in_rev) {
-				state = S_ERROR;
-				timer_oneshot(ERROR_RECOVER_TIME_MS);
-			} else if (!in_estopok || !in_fwd) {
-				timer_oneshot(SPINDLE_COAST_TIME_MS);
-				state = S_FWD_SPINDOWN;
-			} else if (timer_oneshot_done())
-				state = S_FWD;
+			if (in_rev)
+				advance_error();
+			else if (!in_estopok || !in_fwd)
+				advance_fwd_spindown();
+			else if (timer_oneshot_done())
+				advance_fwd();
 			break;
 		case S_FWD:
-			if (in_rev) {
-				state = S_ERROR;
-				timer_oneshot(ERROR_RECOVER_TIME_MS);
-			} else if (!in_estopok || !in_fwd) {
-				timer_oneshot(SPINDLE_COAST_TIME_MS);
-				state = S_FWD_SPINDOWN;
-			}
+			if (in_rev)
+				advance_error();
+			 else if (!in_estopok || !in_fwd)
+				advance_fwd_spindown();
 			break;
 		case S_FWD_SPINDOWN:
-			if (in_rev) {
-				state = S_ERROR;
-				timer_oneshot(ERROR_RECOVER_TIME_MS);
-			} else if (in_estopok && in_fwd) {
-				timer_oneshot(SPINDLE_START_TIME_MS);
-				state = S_FWD_START;
-			} else if (timer_oneshot_done()) {
+			if (in_rev)
+				advance_error();
+			else if (in_estopok && in_fwd)
+				advance_fwd_start();
+			else if (timer_oneshot_done()) {
 				if (!in_estopok)
-					state = S_ESTOPPED;
+					advance_estopped();
 				else
-					state = S_READY;
+					advance_ready();
 			}
 			break;
 		case S_REV_START:
-			if (in_fwd) {
-				state = S_ERROR;
-				timer_oneshot(ERROR_RECOVER_TIME_MS);
-			} else if (!in_estopok || !in_rev) {
-				timer_oneshot(SPINDLE_COAST_TIME_MS);
-				state = S_REV_SPINDOWN;
-			} else if (timer_oneshot_done())
-				state = S_REV;
+			if (in_fwd)
+				advance_error();
+			else if (!in_estopok || !in_rev)
+				advance_rev_spindown();
+			else if (timer_oneshot_done())
+				advance_rev();
 			break;
 		case S_REV:
-			if (in_fwd) {
-				state = S_ERROR;
-				timer_oneshot(ERROR_RECOVER_TIME_MS);
-			} else if (!in_estopok || !in_rev) {
-				timer_oneshot(SPINDLE_COAST_TIME_MS);
-				state = S_REV_SPINDOWN;
-			}
+			if (in_fwd)
+				advance_error();
+			else if (!in_estopok || !in_rev)
+				advance_rev_spindown();
 			break;
 		case S_REV_SPINDOWN:
-			if (in_fwd) {
-				state = S_ERROR;
-				timer_oneshot(ERROR_RECOVER_TIME_MS);
-			} else if (in_estopok && in_rev) {
-				timer_oneshot(SPINDLE_START_TIME_MS);
-				state = S_REV_START;
-			} else if (timer_oneshot_done()) {
+			if (in_fwd)
+				advance_error();
+			else if (in_estopok && in_rev)
+				advance_rev_start();
+			else if (timer_oneshot_done()) {
 				if (!in_estopok)
-					state = S_ESTOPPED;
+					advance_estopped();
 				else
-					state = S_READY;
+					advance_ready();
 			}
 			break;
 		default:
 			/* shouldn't happen */
-			state = S_ERROR;
-			timer_oneshot(ERROR_RECOVER_TIME_MS);
+			advance_error();
 			break;
 		}
 
@@ -308,7 +416,7 @@ main(void)
 			status_times[j++] = STATUS_TIME_GAP;
 			/*
 			 * prepare tick intervals in status_times[]
-			 * odd-numbered entries correspond to lit phases
+			 * odd-numbered phases correspond to lit symbols
 			 * (i.e. dots or dashes), even numbered entries
 			 * are inter-symbol intervals or inter-letter gaps.
 			 */
@@ -386,7 +494,14 @@ main(void)
 			out_light(0);
 			out_inhibit(0);
 			out_start(0);
-			/* don't touch direction */
+			/*
+			 * NB. don't touch direction on error since we don't
+			 * know what its previous state was and we might be
+			 * coming from S_REV (i.e. energised and reversed)
+			 * and must not switch direction until the motor
+			 * has spun down. The S_ERROR->S_ESTOPPED recovery
+			 * will take care of resetting it eventually.
+			 */
 			break;
 		}
 	}
