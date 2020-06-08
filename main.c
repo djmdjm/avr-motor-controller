@@ -28,6 +28,7 @@
 
 #define SPINDLE_START_TIME_MS	500	/* duration of start pulse */
 #define SPINDLE_COAST_TIME_MS	1000	/* holdoff after spindle stop */
+#define COLD_START_TIME_MS	2000	/* holdoff on startup */
 #define ERROR_RECOVER_TIME_MS	5000	/* holdoff after error */
 #define STATUS_TIME_UNIT_MS	100	/* status LED morse code time unit */
 #define STATUS_TIME_DOT		(1 * STATUS_TIME_UNIT_MS)
@@ -37,19 +38,22 @@
 
 enum state {
 	S_ERROR = 0,		/* error state, e.g. when fwd+rev asserted */
-	S_ESTOPPED,		/* initial state, default when estop asserted */
-	S_READY,		/* estop clear but no spindle asserted */
-	S_FWD_START,		/* spindle fwd started; delay for start pulse */
+	S_COLD_START,		/* initial state */
+	S_ESTOPPED,		/* estop asserted */
+	S_READY,		/* estop clear but no spindle dir asserted */
+	S_FWD_START,		/* spindle fwd asserted; start pulse active */
 	S_FWD,			/* spindle fwd */
 	S_FWD_SPINDOWN,		/* hold delay after spindle fwd deassert */
-	S_REV_START,		/* spindle rev started; delay for start pulse */
+	S_REV_START,		/* spindle rev asserted; start pulse active */
 	S_REV,			/* spindle rev */
 	S_REV_SPINDOWN,		/* hold delay after spindle fwd deassert */
 	S_MAX,			/* maximum state value: do not use */
 };
 
-static enum state state = S_ESTOPPED;
+/* current state */
+static enum state state = S_COLD_START;
 
+/* 1KHz timer interrupt */
 static uint32_t timer_1k;
 static uint16_t timer_1k_oneshot;
 static bool timer_1k_done;
@@ -148,6 +152,7 @@ out_status(bool on)
 /* status LED morse code patterns */
 uint8_t stateblink[] = {
 	(4 << 4) | 0x9, /* S_ERROR		morse: -..-	'X' */
+	(3 << 4) | 0x0, /* S_COLD_START		morse: ...	'S' */
 	(1 << 4) | 0x1, /* S_ESTOPPED		morse: .	'E' */
 	(3 << 4) | 0x2, /* S_READY		morse: .-.	'R' */
 	(2 << 4) | 0x2, /* S_FWD_START		morse: .-	'A' */
@@ -181,6 +186,7 @@ main(void)
 	timer_1k_init();
 
 	ostate = state;
+	timer_oneshot(COLD_START_TIME_MS);
 	for (;;) {
 		/* pins are active low */
 		bool in_light = !(PINB & (1<<2));
@@ -197,6 +203,10 @@ main(void)
 				timer_oneshot(ERROR_RECOVER_TIME_MS);
 			else if (timer_oneshot_done())
 				state = S_ESTOPPED; /* recover after timeout */
+			break;
+		case S_COLD_START:
+			if (timer_oneshot_done())
+				state = S_ESTOPPED;
 			break;
 		case S_ESTOPPED:
 			if (in_fwd && in_rev) {
@@ -323,6 +333,12 @@ main(void)
 
 		/* act on current state */
 		switch (state) {
+		case S_COLD_START:
+			out_light(0);
+			out_inhibit(0);
+			out_start(0);
+			out_direction(0);
+			break;
 		case S_ESTOPPED:
 		case S_READY:
 			out_light(in_light);
