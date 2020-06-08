@@ -42,12 +42,13 @@ ISR(TIM0_COMPA_vect)
 static void
 timer_1k_init(void)
 {
-	TCCR0B |= (1 << WGM02); /* timer1 CTC mode */
-	TIMSK0 |= (1 << OCIE0A); /* enable CTC interrupt */
-
 	cli();
+	TCCR0A = (1 << WGM01); /* timer0 CTC mode */
+	TCCR0B = 0;
+	TIMSK0 = (1 << OCIE0A); /* enable CTC interrupt */
+
 	OCR0A = 125; /* 1ms for 1MHz CPU and /8 prescale */
-	TCCR0B |= (1 << CS01); /* /8 prescale */
+	TCCR0B = (1 << CS01); /* /8 prescale */
 	sei();
 }
 
