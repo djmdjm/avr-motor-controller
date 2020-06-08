@@ -330,6 +330,7 @@ main(void)
 			out_inhibit(1);
 			out_start(1);
 			out_direction(0);
+			break;
 		case S_FWD:
 			out_light(in_light);
 			out_inhibit(1);
@@ -347,6 +348,7 @@ main(void)
 			out_inhibit(1);
 			out_start(1);
 			out_direction(1);
+			break;
 		case S_REV:
 			out_light(in_light);
 			out_inhibit(1);
