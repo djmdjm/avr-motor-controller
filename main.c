@@ -139,9 +139,9 @@ uint8_t stateblink[] = {
 	(2 << 4) | 0x2, /* S_FWD_START		morse: .-	'A' */
 	(4 << 4) | 0x1, /* S_FWD		morse: -...	'B' */
 	(4 << 4) | 0x3, /* S_FWD_SPINDOWN	morse: -.-.	'C' */
-	(2 << 4) | 0x0, /* S_FWD_START		morse: ..	'I' */
-	(4 << 4) | 0xe, /* S_FWD		morse: .---	'J' */
-	(3 << 4) | 0x5, /* S_FWD_SPINDOWN	morse: -.-	'K' */
+	(2 << 4) | 0x0, /* S_REV_START		morse: ..	'I' */
+	(4 << 4) | 0xe, /* S_REV		morse: .---	'J' */
+	(3 << 4) | 0x5, /* S_REV_SPINDOWN	morse: -.-	'K' */
 	(3 << 4) | 0x4, /* unknown		morse: ..-	'U' */
 };
 
