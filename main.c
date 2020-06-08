@@ -54,9 +54,9 @@ enum state {
 static enum state state = S_COLD_START;
 
 /* 1KHz timer interrupt */
-static uint32_t timer_1k;
-static uint16_t timer_1k_oneshot;
-static bool timer_1k_done;
+static uint32_t timer_1k;		/* tick count; don't use directly */
+static uint16_t timer_1k_oneshot;	/* oneshot countdown timer */
+static bool timer_1k_done;		/* timer expired; don't use directly */
 
 ISR(TIM0_COMPA_vect)
 {
@@ -80,6 +80,7 @@ timer_1k_init(void)
 	sei();
 }
 
+/* access to monotonic 1KHz tick count. NB. wraps */
 static uint32_t
 timer_1k_val(void)
 {
@@ -91,6 +92,7 @@ timer_1k_val(void)
 	return ret;
 }
 
+/* start oneshot countdown timer, clobbering any existing timer running */
 static void
 timer_oneshot(uint16_t ms)
 {
@@ -100,6 +102,7 @@ timer_oneshot(uint16_t ms)
 	sei();
 }
 
+/* access to countdown timer expired status */
 static bool
 timer_oneshot_done(void)
 {
@@ -111,6 +114,7 @@ timer_oneshot_done(void)
 	return ret;
 }
 
+/* cancel a scheduled countdown timer */
 static void
 timer_oneshot_cancel(void)
 {
@@ -149,7 +153,11 @@ out_status(bool on)
 	PORTA = (PORTA & ~(1<<4)) | (on ? (1<<4) : 0);
 }
 
-/* status LED morse code patterns */
+/*
+ * Status LED morse code patterns.
+ * The upper nibble contains the pattern length, the lower nibble contains
+ * the dot/dash sequence (set bits are dash, clear are dots).
+ */
 uint8_t stateblink[] = {
 	(4 << 4) | 0x9, /* S_ERROR		morse: -..-	'X' */
 	(3 << 4) | 0x0, /* S_COLD_START		morse: ...	'S' */
