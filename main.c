@@ -144,14 +144,14 @@ uint8_t stateblink[] = {
 	(3 << 4) | 0x4, /* unknown		morse: ..-	'U' */
 };
 
-#define SPINDLE_START_TIME_MS	200
+#define SPINDLE_START_TIME_MS	1000
 #define SPINDLE_COAST_TIME_MS	1000
 #define ERROR_RECOVER_TIME_MS	2000
-#define STATUS_TIME_UNIT	100	/* ms */
+#define STATUS_TIME_UNIT	60	/* ms */
 #define STATUS_TIME_DOT		(1 * STATUS_TIME_UNIT)
 #define STATUS_TIME_DASH	(3 * STATUS_TIME_UNIT)
 #define STATUS_TIME_INTERVAL	(1 * STATUS_TIME_UNIT)
-#define STATUS_TIME_GAP		(3 * STATUS_TIME_UNIT)
+#define STATUS_TIME_GAP		(7 * STATUS_TIME_UNIT)
 
 int
 main(void)
@@ -176,10 +176,11 @@ main(void)
 
 	state = ostate = S_ESTOPPED;
 	for (;;) {
-		bool in_light = !!(PINB & (1<<2));
-		bool in_fwd = !!(PINB & (1<<1));
-		bool in_rev = !!(PINB & (1<<0));
-		bool in_estopok = !!(PINA & (1<<7));
+		/* pins are active low */
+		bool in_light = !(PINB & (1<<2));
+		bool in_fwd = !(PINB & (1<<1));
+		bool in_rev = !(PINB & (1<<0));
+		bool in_estopok = !(PINA & (1<<7));
 
 		/* Update state based on inputs */
 		ostate = state;
@@ -190,7 +191,10 @@ main(void)
 				state = S_ESTOPPED;
 			break;
 		case S_ESTOPPED:
-			if (in_estopok)
+			if (in_fwd && in_rev) {
+				state = S_ERROR;
+				timer_oneshot(ERROR_RECOVER_TIME_MS);
+			} else if (in_estopok)
 				state = S_READY;
 			break;
 		case S_READY:
