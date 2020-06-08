@@ -83,11 +83,13 @@ timer_oneshot_done(void)
 	return ret;
 }
 
+#if 0
 static void
 timer_oneshot_cancel(void)
 {
 	timer_oneshot(0);
 }
+#endif
 
 static void
 out_light(bool on)
@@ -238,7 +240,7 @@ main(void)
 				state = S_ERROR;
 				timer_oneshot(ERROR_RECOVER_TIME_MS);
 			} else if (in_estopok && in_fwd) {
-				timer_oneshot_cancel();
+				timer_oneshot(SPINDLE_START_TIME_MS);
 				state = S_FWD_START;
 			} else if (timer_oneshot_done()) {
 				if (!in_estopok)
@@ -271,7 +273,7 @@ main(void)
 				state = S_ERROR;
 				timer_oneshot(ERROR_RECOVER_TIME_MS);
 			} else if (in_estopok && in_rev) {
-				timer_oneshot_cancel();
+				timer_oneshot(SPINDLE_START_TIME_MS);
 				state = S_REV_START;
 			} else if (timer_oneshot_done()) {
 				if (!in_estopok)
