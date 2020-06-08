@@ -144,7 +144,7 @@ uint8_t stateblink[] = {
 	(3 << 4) | 0x4, /* unknown		morse: ..-	'U' */
 };
 
-#define SPINDLE_START_TIME_MS	1000
+#define SPINDLE_START_TIME_MS	500
 #define SPINDLE_COAST_TIME_MS	1000
 #define ERROR_RECOVER_TIME_MS	2000
 #define STATUS_TIME_UNIT	60	/* ms */
@@ -186,9 +186,11 @@ main(void)
 		ostate = state;
 		switch (state) {
 		case S_ERROR:
-			/* recover from errors after long timeout */
-			if (timer_oneshot_done())
-				state = S_ESTOPPED;
+			/* stay in error state if inputs still bad */
+			if (in_fwd && in_rev)
+				timer_oneshot(ERROR_RECOVER_TIME_MS);
+			else if (timer_oneshot_done())
+				state = S_ESTOPPED; /* recover after timeout */
 			break;
 		case S_ESTOPPED:
 			if (in_fwd && in_rev) {
