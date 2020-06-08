@@ -26,6 +26,30 @@
 
 #include <util/delay.h>
 
+#define SPINDLE_START_TIME_MS	500	/* duration of start pulse */
+#define SPINDLE_COAST_TIME_MS	1000	/* holdoff after spindle stop */
+#define ERROR_RECOVER_TIME_MS	5000	/* holdoff after error */
+#define STATUS_TIME_UNIT_MS	100	/* status LED morse code time unit */
+#define STATUS_TIME_DOT		(1 * STATUS_TIME_UNIT_MS)
+#define STATUS_TIME_DASH	(3 * STATUS_TIME_UNIT_MS)
+#define STATUS_TIME_INTERVAL	(1 * STATUS_TIME_UNIT_MS)
+#define STATUS_TIME_GAP		(7 * STATUS_TIME_UNIT_MS)
+
+enum state {
+	S_ERROR = 0,		/* error state, e.g. when fwd+rev asserted */
+	S_ESTOPPED,		/* initial state, default when estop asserted */
+	S_READY,		/* estop clear but no spindle asserted */
+	S_FWD_START,		/* spindle fwd started; delay for start pulse */
+	S_FWD,			/* spindle fwd */
+	S_FWD_SPINDOWN,		/* hold delay after spindle fwd deassert */
+	S_REV_START,		/* spindle rev started; delay for start pulse */
+	S_REV,			/* spindle rev */
+	S_REV_SPINDOWN,		/* hold delay after spindle fwd deassert */
+	S_MAX,			/* maximum state value: do not use */
+};
+
+static enum state state = S_ESTOPPED;
+
 static uint32_t timer_1k;
 static uint16_t timer_1k_oneshot;
 static bool timer_1k_done;
@@ -121,19 +145,7 @@ out_status(bool on)
 	PORTA = (PORTA & ~(1<<4)) | (on ? (1<<4) : 0);
 }
 
-enum state {
-	S_ERROR = 0,		/* error state, e.g. when fwd+rev asserted */
-	S_ESTOPPED,		/* initial state, default when estop asserted */
-	S_READY,		/* estop clear but no spindle asserted */
-	S_FWD_START,		/* spindle fwd started; delay for start pulse */
-	S_FWD,			/* spindle fwd */
-	S_FWD_SPINDOWN,		/* hold delay after spindle fwd deassert */
-	S_REV_START,		/* spindle rev started; delay for start pulse */
-	S_REV,			/* spindle rev */
-	S_REV_SPINDOWN,		/* hold delay after spindle fwd deassert */
-	S_MAX,			/* maximum state value: do not use */
-};
-
+/* status LED morse code patterns */
 uint8_t stateblink[] = {
 	(4 << 4) | 0x9, /* S_ERROR		morse: -..-	'X' */
 	(1 << 4) | 0x1, /* S_ESTOPPED		morse: .	'E' */
@@ -147,19 +159,10 @@ uint8_t stateblink[] = {
 	(3 << 4) | 0x4, /* unknown		morse: ..-	'U' */
 };
 
-#define SPINDLE_START_TIME_MS	500
-#define SPINDLE_COAST_TIME_MS	1000
-#define ERROR_RECOVER_TIME_MS	2000
-#define STATUS_TIME_UNIT	100	/* ms */
-#define STATUS_TIME_DOT		(1 * STATUS_TIME_UNIT)
-#define STATUS_TIME_DASH	(3 * STATUS_TIME_UNIT)
-#define STATUS_TIME_INTERVAL	(1 * STATUS_TIME_UNIT)
-#define STATUS_TIME_GAP		(7 * STATUS_TIME_UNIT)
-
 int
 main(void)
 {
-	enum state ostate, state;
+	enum state ostate;
 	uint32_t status_timeout = 0;
 	uint32_t status_times[32];
 	uint8_t i, j, x, status_len = 0, status_phase = 0;
@@ -177,7 +180,7 @@ main(void)
 
 	timer_1k_init();
 
-	state = ostate = S_ESTOPPED;
+	ostate = state;
 	for (;;) {
 		/* pins are active low */
 		bool in_light = !(PINB & (1<<2));
