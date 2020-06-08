@@ -1,0 +1,28 @@
+This is the firmware for my attiny44a-based interface board between the
+BF20LV mill spindle motor board and a Centroid Acorn CNC controller.
+
+My mill uses a three position forward-off-reverse reversing switch that
+electrically swaps the polarity of the 220VDC drive from the motor
+board.  The central off position ensures that the direction switching
+does not occur while the drive is energised.
+
+The Centroid Acorn offers canned spindle-forward and spindle-reverse
+PLC outputs. To use these with the BF20LV spindle driver, these need
+to be converted to an inhibit level signal and a start pulse signal to
+the contactor, and a direction level signal to a DPDT relay to replace
+the direction switch. Additionally, I don't want the direction relay
+switching while the drive is active so I can use a cheap AC relay
+instead of an expensive DC one.
+
+The firmware does this signal conversion and also enforces 0VDC
+direction switching by providing a spindown holdoff before the direction
+can be reversed. It also looks for nonsensical input combinations
+(especially forward+reverse simultaneously) and passes through a signal
+to the mill head halogen light.
+
+The attiny44a is pretty light on I/O, so the MCU status is communicated
+via single letter morse code from a status LED. Read the code for what
+the letters mean.
+
+djm 20200608
+
