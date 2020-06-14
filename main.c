@@ -363,7 +363,7 @@ main(void)
 				advance_rev_start();
 			break;
 		case S_FWD_START:
-			if (in_rev)
+			if (in_fwd && in_rev)
 				advance_error();
 			else if (!in_estopok || !in_fwd)
 				advance_fwd_spindown();
@@ -371,13 +371,13 @@ main(void)
 				advance_fwd();
 			break;
 		case S_FWD:
-			if (in_rev)
+			if (in_fwd && in_rev)
 				advance_error();
 			else if (!in_estopok || !in_fwd)
 				advance_fwd_spindown();
 			break;
 		case S_FWD_SPINDOWN:
-			if (in_rev)
+			if (in_fwd && in_rev)
 				advance_error();
 			else if (in_estopok && in_fwd)
 				advance_fwd_start();
@@ -389,7 +389,7 @@ main(void)
 			}
 			break;
 		case S_REV_START:
-			if (in_fwd)
+			if (in_fwd && in_rev)
 				advance_error();
 			else if (!in_estopok || !in_rev)
 				advance_rev_spindown();
@@ -397,13 +397,13 @@ main(void)
 				advance_rev();
 			break;
 		case S_REV:
-			if (in_fwd)
+			if (in_fwd && in_rev)
 				advance_error();
 			else if (!in_estopok || !in_rev)
 				advance_rev_spindown();
 			break;
 		case S_REV_SPINDOWN:
-			if (in_fwd)
+			if (in_fwd && in_rev)
 				advance_error();
 			else if (in_estopok && in_rev)
 				advance_rev_start();
