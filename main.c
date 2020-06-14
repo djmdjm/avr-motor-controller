@@ -248,6 +248,7 @@ static void
 advance_fwd_spindown(void)
 {
 	switch (state) {
+	case S_FWD_START:
 	case S_FWD:
 		break;
 	default:
@@ -291,6 +292,7 @@ static void
 advance_rev_spindown(void)
 {
 	switch (state) {
+	case S_REV_START:
 	case S_REV:
 		break;
 	default:
@@ -371,7 +373,7 @@ main(void)
 		case S_FWD:
 			if (in_rev)
 				advance_error();
-			 else if (!in_estopok || !in_fwd)
+			else if (!in_estopok || !in_fwd)
 				advance_fwd_spindown();
 			break;
 		case S_FWD_SPINDOWN:
